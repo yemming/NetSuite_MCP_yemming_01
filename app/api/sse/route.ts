@@ -26,10 +26,10 @@ export async function GET(req: NextRequest) {
         // This matches the approach in start_netsuite_server.sh
         
         // Ensure MCP server can find the session file
-        // Session file is stored in /app/sessions/{accountId}.json
+        // Session file is stored in /app/sessions/{accountId}.json (always lowercase)
         // MCP server needs to know where to look for it
         const sessionsDir = path.join(process.cwd(), 'sessions');
-        const accountId = process.env.NETSUITE_ACCOUNT_ID;
+        const accountId = (process.env.NETSUITE_ACCOUNT_ID || '').toLowerCase();
         const sessionFilePath = path.join(sessionsDir, `${accountId}.json`);
         
         // Read session file and ensure it's accessible to MCP server
@@ -90,24 +90,9 @@ export async function GET(req: NextRequest) {
             // Force authentication state if possible via env (hypothetical but helpful)
             mcpEnv.MCP_AUTHENTICATED = "true";
             
-            // CRITICAL FIX: Force account ID in environment variable to be lowercase
-            // This ensures it matches the filename we are about to create
-            mcpEnv.NETSUITE_ACCOUNT_ID = (mcpEnv.NETSUITE_ACCOUNT_ID || '').toLowerCase();
-            
-            // CRITICAL FIX: Force Session Data Account ID to be lowercase
-            // We are creating a new object to avoid mutating the original sessionData if we need it later
-            sessionData = {
-                ...sessionData,
-                config: {
-                    ...sessionData.config,
-                    accountId: (sessionData.config?.accountId || '').toLowerCase()
-                },
-                tokens: {
-                    ...sessionData.tokens,
-                    accountId: (sessionData.tokens?.accountId || '').toLowerCase()
-                }
-            };
-            console.log(`[${sessionId}] 🛠️ Forced Account ID to lowercase in Session Data: ${sessionData.config.accountId}`);
+            // Account ID should already be lowercase from session file
+            // But we'll verify it for consistency
+            console.log(`[${sessionId}] 📋 Account ID from session: ${sessionData.config?.accountId}`);
         }
         
         // Log the environment variables (masking secrets) to debug
@@ -176,9 +161,12 @@ export async function GET(req: NextRequest) {
             
             if (sessionData && fs.existsSync(sessionFilePath)) {
                 try {
+                    // Use lowercase account ID for consistency
                     const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
-                    fs.writeFileSync(mcpSessionPath, fs.readFileSync(sessionFilePath));
+                    const sessionContent = JSON.stringify(sessionData, null, 2);
+                    fs.writeFileSync(mcpSessionPath, sessionContent);
                     console.log(`[${sessionId}] ✅ Enforced session copy to: ${mcpSessionPath}`);
+                    console.log(`[${sessionId}] 📋 Session Account ID: ${sessionData.config?.accountId}`);
                 } catch (e) {
                     console.error(`[${sessionId}] Failed to copy session file:`, e);
                 }

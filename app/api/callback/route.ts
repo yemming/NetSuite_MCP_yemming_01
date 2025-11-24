@@ -181,11 +181,14 @@ export async function GET(request: Request) {
             fs.mkdirSync(sessionsDir, { recursive: true });
         }
 
+        // CRITICAL: Always use lowercase for Account ID to match MCP server expectations
+        const normalizedAccountId = accountId.toLowerCase();
+
         const sessionData = {
             pkce: null, // We didn't use PKCE here (simplified flow)
             state: "generated_by_nextjs",
             config: {
-                accountId: accountId.toUpperCase(), // Ensure Account ID is uppercase
+                accountId: normalizedAccountId, // Use lowercase for consistency
                 clientId,
                 redirectUri
             },
@@ -193,20 +196,18 @@ export async function GET(request: Request) {
             tokens: {
                 ...tokens,
                 // Ensure these fields are present in tokens object as well
-                accountId: accountId.toUpperCase(),
+                accountId: normalizedAccountId,
                 clientId
             },
             authenticated: true
         };
 
-        // Save with both original and uppercase filenames to be safe
-        const filePath = path.join(sessionsDir, `${accountId}.json`);
+        // Save with lowercase filename only (consistent with MCP server)
+        const filePath = path.join(sessionsDir, `${normalizedAccountId}.json`);
         fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2));
         
-        const upperFilePath = path.join(sessionsDir, `${accountId.toUpperCase()}.json`);
-        if (filePath !== upperFilePath) {
-             fs.writeFileSync(upperFilePath, JSON.stringify(sessionData, null, 2));
-        }
+        console.log(`✅ Session saved: ${filePath}`);
+        console.log(`📋 Account ID (normalized): ${normalizedAccountId}`);
 
         // Also try to save to MCP server's expected location
         // When using npx, the MCP server might look in its own node_modules
@@ -218,14 +219,10 @@ export async function GET(request: Request) {
                 if (!fs.existsSync(nodeModulesPath)) {
                     fs.mkdirSync(nodeModulesPath, { recursive: true });
                 }
-                const mcpSessionPath = path.join(nodeModulesPath, `${accountId}.json`);
+                const mcpSessionPath = path.join(nodeModulesPath, `${normalizedAccountId}.json`);
                 fs.writeFileSync(mcpSessionPath, JSON.stringify(sessionData, null, 2));
                 
-                const mcpUpperSessionPath = path.join(nodeModulesPath, `${accountId.toUpperCase()}.json`);
-                if (mcpSessionPath !== mcpUpperSessionPath) {
-                    fs.writeFileSync(mcpUpperSessionPath, JSON.stringify(sessionData, null, 2));
-                }
-                console.log(`Session also saved to MCP location: ${mcpSessionPath}`);
+                console.log(`✅ Session also saved to MCP location: ${mcpSessionPath}`);
             }
         } catch (e) {
             // If MCP package is not installed locally (using npx), this will fail
