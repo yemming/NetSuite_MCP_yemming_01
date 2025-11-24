@@ -84,8 +84,16 @@ export async function GET(req: NextRequest) {
             if (sessionData.tokens.refresh_token) {
                 mcpEnv.NETSUITE_REFRESH_TOKEN = sessionData.tokens.refresh_token;
             }
+            // Force authentication state if possible via env (hypothetical but helpful)
+            mcpEnv.MCP_AUTHENTICATED = "true";
         }
         
+        // Log the environment variables (masking secrets) to debug
+        console.log(`[${sessionId}] 🛡️ Auth Injection:`);
+        console.log(`[${sessionId}] - Access Token Injected: ${!!mcpEnv.NETSUITE_ACCESS_TOKEN}`);
+        console.log(`[${sessionId}] - Refresh Token Injected: ${!!mcpEnv.NETSUITE_REFRESH_TOKEN}`);
+        console.log(`[${sessionId}] - Account ID: ${mcpEnv.NETSUITE_ACCOUNT_ID}`);
+
         // --- CRITICAL FIX: Use standard node_modules executable path ---
         
         // In Next.js Docker standalone build, node_modules are flattened.
