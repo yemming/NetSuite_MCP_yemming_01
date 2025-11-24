@@ -89,6 +89,25 @@ export async function GET(req: NextRequest) {
             }
             // Force authentication state if possible via env (hypothetical but helpful)
             mcpEnv.MCP_AUTHENTICATED = "true";
+            
+            // CRITICAL FIX: Force account ID in environment variable to be lowercase
+            // This ensures it matches the filename we are about to create
+            mcpEnv.NETSUITE_ACCOUNT_ID = (mcpEnv.NETSUITE_ACCOUNT_ID || '').toLowerCase();
+            
+            // CRITICAL FIX: Force Session Data Account ID to be lowercase
+            // We are creating a new object to avoid mutating the original sessionData if we need it later
+            sessionData = {
+                ...sessionData,
+                config: {
+                    ...sessionData.config,
+                    accountId: (sessionData.config?.accountId || '').toLowerCase()
+                },
+                tokens: {
+                    ...sessionData.tokens,
+                    accountId: (sessionData.tokens?.accountId || '').toLowerCase()
+                }
+            };
+            console.log(`[${sessionId}] 🛠️ Forced Account ID to lowercase in Session Data: ${sessionData.config.accountId}`);
         }
         
         // Log the environment variables (masking secrets) to debug
