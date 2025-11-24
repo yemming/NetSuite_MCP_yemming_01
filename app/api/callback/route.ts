@@ -201,6 +201,26 @@ export async function GET(request: Request) {
         const filePath = path.join(sessionsDir, `${accountId}.json`);
         fs.writeFileSync(filePath, JSON.stringify(sessionData, null, 2));
 
+        // Also try to save to MCP server's expected location
+        // When using npx, the MCP server might look in its own node_modules
+        // Try to find and write to that location as well
+        try {
+            // Try to find node_modules/@suiteinsider/netsuite-mcp/sessions
+            const nodeModulesPath = path.join(process.cwd(), 'node_modules', '@suiteinsider', 'netsuite-mcp', 'sessions');
+            if (fs.existsSync(path.dirname(nodeModulesPath))) {
+                if (!fs.existsSync(nodeModulesPath)) {
+                    fs.mkdirSync(nodeModulesPath, { recursive: true });
+                }
+                const mcpSessionPath = path.join(nodeModulesPath, `${accountId}.json`);
+                fs.writeFileSync(mcpSessionPath, JSON.stringify(sessionData, null, 2));
+                console.log(`Session also saved to MCP location: ${mcpSessionPath}`);
+            }
+        } catch (e) {
+            // If MCP package is not installed locally (using npx), this will fail
+            // That's okay, the main session file is saved above
+            console.log('Could not save to MCP node_modules location (using npx, this is expected)');
+        }
+
         // Also save to a persistent location if possible, e.g., /tmp or a volume
         // For Zeabur, if we restart, we lose it unless we use a Volume.
         // But for now, this gets us "Logged In" for the current running instance.

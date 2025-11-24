@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import fs from 'fs';
 import { sessions } from '@/lib/sessions';
 
 export async function GET(req: NextRequest) {
@@ -29,6 +30,19 @@ export async function GET(req: NextRequest) {
         // MCP server needs to know where to look for it
         const sessionsDir = path.join(process.cwd(), 'sessions');
         const accountId = process.env.NETSUITE_ACCOUNT_ID;
+        
+        // Before starting MCP server, ensure session file is accessible
+        // The MCP server might look in different locations depending on how it's executed
+        // We'll set the working directory and also try to create a symlink if needed
+        const sessionFilePath = path.join(sessionsDir, `${accountId}.json`);
+        
+        // Log session file location for debugging
+        console.log(`[${sessionId}] Starting MCP server, session file should be at: ${sessionFilePath}`);
+        if (fs.existsSync(sessionFilePath)) {
+            console.log(`[${sessionId}] Session file exists: ${sessionFilePath}`);
+        } else {
+            console.warn(`[${sessionId}] WARNING: Session file not found at: ${sessionFilePath}`);
+        }
         
         mcpProcess = spawn('npx', ['@suiteinsider/netsuite-mcp@latest'], {
             env: {
