@@ -67,16 +67,33 @@ export async function GET(request: Request) {
     const tokenUrl = `https://${accountDomain}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token`;
 
     try {
-        // Construct Basic Auth header if secret exists (Confidential), else just body (Public)
-        // Actually, for Public Client, we just send client_id in body.
-        // Let's assume Public Client as per previous context.
-
-        const body = new URLSearchParams({
+        // NetSuite OAuth 2.0 token exchange
+        // If Client Secret is provided, use Basic Auth (even for Public Client)
+        // If no Client Secret, send client_id in body (true Public Client)
+        
+        const bodyParams: Record<string, string> = {
             grant_type: 'authorization_code',
-            code,
-            redirect_uri: redirectUri,
-            client_id: clientId
-        });
+            code: code!,
+            redirect_uri: redirectUri
+        };
+
+        // Prepare headers
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        };
+
+        // If Client Secret exists, use Basic Auth
+        // Otherwise, include client_id in body (Public Client without secret)
+        if (clientSecret) {
+            // Use Basic Auth: base64(client_id:client_secret)
+            const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+            headers['Authorization'] = `Basic ${credentials}`;
+        } else {
+            // Public Client: include client_id in body
+            bodyParams.client_id = clientId;
+        }
+
+        const body = new URLSearchParams(bodyParams);
 
         // Log token exchange request for debugging
         // IMPORTANT: redirect_uri must EXACTLY match what was used in authorization
@@ -87,15 +104,14 @@ export async function GET(request: Request) {
             accountId,
             clientId: clientId.substring(0, 10) + '...',
             hasClientSecret: !!clientSecret,
+            usingBasicAuth: !!clientSecret,
             codeLength: code?.length || 0,
             codePrefix: code?.substring(0, 10) || 'none'
         });
 
         const tokenRes = await fetch(tokenUrl, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
+            headers,
             body: body.toString()
         });
 
