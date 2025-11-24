@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
 import { sessions } from '@/lib/sessions';
 
 export async function GET(req: NextRequest) {
@@ -22,13 +23,25 @@ export async function GET(req: NextRequest) {
     try {
         // Use npx to execute the package directly, avoiding module resolution issues during build
         // This matches the approach in start_netsuite_server.sh
+        
+        // Ensure MCP server can find the session file
+        // Session file is stored in /app/sessions/{accountId}.json
+        // MCP server needs to know where to look for it
+        const sessionsDir = path.join(process.cwd(), 'sessions');
+        const accountId = process.env.NETSUITE_ACCOUNT_ID;
+        
         mcpProcess = spawn('npx', ['@suiteinsider/netsuite-mcp@latest'], {
             env: {
                 ...process.env,
                 NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID,
                 NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID,
-                OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090"
-            }
+                NETSUITE_CLIENT_SECRET: process.env.NETSUITE_CLIENT_SECRET,
+                OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090",
+                // Set working directory so MCP server can find session files
+                // The MCP server looks for sessions in its working directory or node_modules location
+                // By setting cwd, we ensure it can find the session file
+            },
+            cwd: process.cwd() // Set working directory to app root where sessions are stored
         });
 
         // Store session
