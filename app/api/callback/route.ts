@@ -5,8 +5,21 @@ import path from 'path';
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
+    const state = searchParams.get('state');
     const error = searchParams.get('error');
     const errorDescription = searchParams.get('error_description');
+    
+    // Get cookies for PKCE verifier and state validation
+    const cookieHeader = request.headers.get('cookie') || '';
+    const cookies = Object.fromEntries(
+        cookieHeader.split('; ').map(c => {
+            const [key, ...v] = c.split('=');
+            return [key, v.join('=')];
+        })
+    );
+    
+    const pkceVerifier = cookies.pkce_verifier;
+    const savedState = cookies.oauth_state;
 
     if (error) {
         // Provide helpful error messages for common OAuth errors
@@ -46,14 +59,27 @@ export async function GET(request: Request) {
     if (!code) {
         return NextResponse.json({ error: 'No code provided' }, { status: 400 });
     }
+    
+    // Validate state to prevent CSRF attacks
+    if (state && savedState && state !== savedState) {
+        console.error('State mismatch:', { received: state, expected: savedState });
+        return NextResponse.json({ error: 'Invalid state parameter - possible CSRF attack' }, { status: 400 });
+    }
+    
+    // Validate PKCE verifier exists
+    if (!pkceVerifier) {
+        console.error('PKCE verifier not found in cookies');
+        return NextResponse.json({ 
+            error: 'PKCE verifier not found',
+            details: 'The authorization session may have expired. Please try again.',
+            action: 'Restart the OAuth flow by visiting /api/auth/login'
+        }, { status: 400 });
+    }
 
     const accountId = process.env.NETSUITE_ACCOUNT_ID;
     const clientId = process.env.NETSUITE_CLIENT_ID;
-    const clientSecret = process.env.NETSUITE_CLIENT_SECRET; // User needs to provide this!
-    // Wait, the previous setup didn't use Client Secret (Public Client?). 
-    // The tutorial said "Public Client". If so, we don't need client_secret.
-    // But for "Confidential Client" (Server-side), we usually do.
-    // If it's a Public Client, we just send client_id.
+    const clientSecret = process.env.NETSUITE_CLIENT_SECRET;
+    // Note: NetSuite MCP uses Public Client (no client secret) with PKCE for security
 
     const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
     const redirectUri = `${baseUrl}/api/callback`;
@@ -67,14 +93,14 @@ export async function GET(request: Request) {
     const tokenUrl = `https://${accountDomain}.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token`;
 
     try {
-        // NetSuite OAuth 2.0 token exchange
-        // If Client Secret is provided, use Basic Auth (even for Public Client)
-        // If no Client Secret, send client_id in body (true Public Client)
+        // NetSuite OAuth 2.0 token exchange with PKCE
+        // NetSuite MCP Server uses Public Client pattern with PKCE (no client secret)
         
         const bodyParams: Record<string, string> = {
             grant_type: 'authorization_code',
             code: code!,
-            redirect_uri: redirectUri
+            redirect_uri: redirectUri,
+            code_verifier: pkceVerifier  // ✅ Include PKCE verifier (critical!)
         };
 
         // Prepare headers
@@ -82,29 +108,34 @@ export async function GET(request: Request) {
             'Content-Type': 'application/x-www-form-urlencoded'
         };
 
-        // If Client Secret exists, use Basic Auth
-        // Otherwise, include client_id in body (Public Client without secret)
+        // Public Client pattern: include client_id in body (no Authorization header)
+        // This matches NetSuite MCP Server's implementation
+        bodyParams.client_id = clientId;
+        
+        // Note: If you have a client secret (Confidential Client), you can use Basic Auth
+        // but NetSuite MCP recommends Public Client with PKCE for better security
         if (clientSecret) {
-            // Use Basic Auth: base64(client_id:client_secret)
-            const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-            headers['Authorization'] = `Basic ${credentials}`;
-        } else {
-            // Public Client: include client_id in body
-            bodyParams.client_id = clientId;
+            console.warn('⚠️ Client secret provided, but NetSuite MCP uses Public Client with PKCE');
+            // Optionally use Basic Auth if you prefer Confidential Client:
+            // const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+            // headers['Authorization'] = `Basic ${credentials}`;
+            // delete bodyParams.client_id;
         }
 
         const body = new URLSearchParams(bodyParams);
 
         // Log token exchange request for debugging
         // IMPORTANT: redirect_uri must EXACTLY match what was used in authorization
-        console.log('Token exchange request:', {
+        console.log('Token exchange request with PKCE:', {
             tokenUrl,
             redirectUri,
             redirectUriEncoded: encodeURIComponent(redirectUri),
             accountId,
             clientId: clientId.substring(0, 10) + '...',
             hasClientSecret: !!clientSecret,
-            usingBasicAuth: !!clientSecret,
+            hasPKCEVerifier: !!pkceVerifier,
+            verifierLength: pkceVerifier?.length || 0,
+            verifierPrefix: pkceVerifier?.substring(0, 10) || 'none',
             codeLength: code?.length || 0,
             codePrefix: code?.substring(0, 10) || 'none'
         });
@@ -197,8 +228,8 @@ export async function GET(request: Request) {
         const normalizedAccountId = accountId.toLowerCase();
 
         const sessionData = {
-            pkce: null, // We didn't use PKCE here (simplified flow)
-            state: "generated_by_nextjs",
+            pkce: null, // Clear PKCE after successful token exchange (security best practice)
+            state: state || "oauth_state",
             config: {
                 accountId: normalizedAccountId, // Use lowercase for consistency
                 clientId,
@@ -212,14 +243,16 @@ export async function GET(request: Request) {
                 accountId: normalizedAccountId,
                 clientId
             },
-            authenticated: true
+            authenticated: true,
+            usedPKCE: true // Flag indicating PKCE was used for this session
         };
 
-        // Log scope information for debugging
-        console.log('Session created with scope:', {
+        // Log scope and PKCE information for debugging
+        console.log('Session created with PKCE and scope:', {
             tokenScope: tokens.scope || 'not provided',
             requestedScope: process.env.NETSUITE_SCOPE || 'mcp',
-            accountId: normalizedAccountId
+            accountId: normalizedAccountId,
+            pkceUsed: true
         });
 
         // Save with lowercase filename only (consistent with MCP server)
@@ -254,7 +287,12 @@ export async function GET(request: Request) {
         // For Zeabur, if we restart, we lose it unless we use a Volume.
         // But for now, this gets us "Logged In" for the current running instance.
 
-        return NextResponse.redirect(`${baseUrl}?connected=true`);
+        // Clear PKCE cookies after successful authentication (security best practice)
+        const response = NextResponse.redirect(`${baseUrl}?connected=true`);
+        response.cookies.delete('pkce_verifier');
+        response.cookies.delete('oauth_state');
+        
+        return response;
 
     } catch (error) {
         console.error('Auth error:', error);
