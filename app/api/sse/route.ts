@@ -86,55 +86,79 @@ export async function GET(req: NextRequest) {
             }
         }
         
-        // --- CRITICAL FIX: Direct Node Execution with Session Pre-seeding ---
+        // --- CRITICAL FIX: Use standard node_modules executable path ---
         
-        // 1. Determine MCP package location
-        // In Next.js standalone (Docker), we explicitly copied node_modules/@suiteinsider
-        // to the root node_modules. So we can access it directly.
-        const mcpPackagePath = path.join(process.cwd(), 'node_modules', '@suiteinsider', 'netsuite-mcp');
-        // Use 'dist/index.js' if it exists (compiled), otherwise 'src/index.js'
-        // Based on npm view, main is src/index.js, but installed package usually has dist/ or build/
-        // Let's check for dist first, then src
-        let mcpScriptPath = path.join(mcpPackagePath, 'dist', 'index.js');
-        if (!fs.existsSync(mcpScriptPath)) {
-            mcpScriptPath = path.join(mcpPackagePath, 'src', 'index.js');
-        }
-        // Fallback to index.js in root if neither exists
-        if (!fs.existsSync(mcpScriptPath)) {
-             mcpScriptPath = path.join(mcpPackagePath, 'index.js');
-        }
-
-        const mcpSessionsDir = path.join(mcpPackagePath, 'sessions');
-
-        console.log(`[${sessionId}] 🛠️ Setup:`);
-        console.log(`[${sessionId}] - MCP Package Path: ${mcpPackagePath}`);
-        console.log(`[${sessionId}] - MCP Script Path: ${mcpScriptPath}`);
-        console.log(`[${sessionId}] - Target Sessions Dir: ${mcpSessionsDir}`);
-
-        // 2. Ensure MCP sessions directory exists
-        if (!fs.existsSync(mcpSessionsDir)) {
-             try {
-                fs.mkdirSync(mcpSessionsDir, { recursive: true });
-             } catch (e) {
-                console.error(`[${sessionId}] Failed to create MCP sessions dir:`, e);
+        // In Next.js Docker standalone build, node_modules are flattened.
+        // We can rely on the binary symlinked in .bin/netsuite-mcp
+        // OR find the package directly.
+        
+        // But since Turbopack hates dynamic paths, we will try to use 'npx' again 
+        // BUT with a twist: we know the package is installed.
+        // However, npx might still try to download.
+        
+        // Safer bet: Use the absolute path relative to CWD, but constructed in a way
+        // that doesn't look like a static import to Turbopack.
+        
+        // We will use the standard 'node_modules/.bin/netsuite-mcp' if available,
+        // otherwise fall back to constructing the path to index.js
+        
+        const binPath = path.join(process.cwd(), 'node_modules', '.bin', 'netsuite-mcp');
+        const pkgPath = path.join(process.cwd(), 'node_modules', '@suiteinsider', 'netsuite-mcp');
+        
+        let executable = 'node';
+        let args: string[] = [];
+        
+        if (fs.existsSync(binPath)) {
+             console.log(`[${sessionId}] 🚀 Using bin path: ${binPath}`);
+             executable = binPath;
+        } else {
+             // Fallback to finding index.js
+             // We construct these paths at runtime so Turbopack doesn't try to bundle them
+             const possiblePaths = [
+                 path.join(pkgPath, 'dist', 'index.js'),
+                 path.join(pkgPath, 'src', 'index.js'),
+                 path.join(pkgPath, 'index.js')
+             ];
+             
+             const scriptPath = possiblePaths.find(p => fs.existsSync(p));
+             
+             if (scriptPath) {
+                 console.log(`[${sessionId}] 🚀 Using script path: ${scriptPath}`);
+                 args = [scriptPath];
+             } else {
+                 console.warn(`[${sessionId}] ⚠️ Could not find netsuite-mcp executable or script. Falling back to npx.`);
+                 executable = 'npx';
+                 args = ['@suiteinsider/netsuite-mcp@latest'];
              }
         }
-
-        // 3. Force copy session file to MCP location BEFORE starting
-        if (sessionData && fs.existsSync(sessionFilePath)) {
-            try {
-                const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
-                fs.writeFileSync(mcpSessionPath, fs.readFileSync(sessionFilePath));
-                console.log(`[${sessionId}] ✅ Enforced session copy to: ${mcpSessionPath}`);
-            } catch (e) {
-                console.error(`[${sessionId}] Failed to copy session file:`, e);
+        
+        // 2. Ensure MCP sessions directory exists (if we found the package)
+        // If we are using npx, we can't pre-seed easily, but if we found the package, we can.
+        if (executable !== 'npx') {
+            const mcpSessionsDir = path.join(pkgPath, 'sessions');
+            if (!fs.existsSync(mcpSessionsDir)) {
+                try {
+                    fs.mkdirSync(mcpSessionsDir, { recursive: true });
+                } catch (e) {
+                     // Ignore creation errors
+                }
+            }
+            
+            if (sessionData && fs.existsSync(sessionFilePath)) {
+                try {
+                    const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
+                    fs.writeFileSync(mcpSessionPath, fs.readFileSync(sessionFilePath));
+                    console.log(`[${sessionId}] ✅ Enforced session copy to: ${mcpSessionPath}`);
+                } catch (e) {
+                    console.error(`[${sessionId}] Failed to copy session file:`, e);
+                }
             }
         }
 
-        // 4. Start process using node directly (Bypass npx)
-        console.log(`[${sessionId}] 🚀 Spawning MCP Server...`);
+        // 4. Start process
+        console.log(`[${sessionId}] 🚀 Spawning MCP Server: ${executable} ${args.join(' ')}`);
         
-        mcpProcess = spawn('node', [mcpScriptPath], {
+        mcpProcess = spawn(executable, args, {
             env: mcpEnv,
             cwd: process.cwd() 
         });
