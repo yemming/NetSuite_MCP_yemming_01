@@ -135,16 +135,19 @@ export async function GET(req: NextRequest) {
                  path.join(pkgPath, 'index.js')
              ];
              
-             const scriptPath = possiblePaths.find(p => fs.existsSync(p));
-             
-             if (scriptPath) {
-                 console.log(`[${sessionId}] 🚀 Using script path: ${scriptPath}`);
-                 args = [scriptPath];
-             } else {
-                 console.warn(`[${sessionId}] ⚠️ Could not find netsuite-mcp executable or script. Falling back to npx.`);
-                 executable = 'npx';
-                 args = ['@suiteinsider/netsuite-mcp@latest'];
-             }
+            const scriptPath = possiblePaths.find(p => fs.existsSync(p));
+            
+            if (scriptPath) {
+                console.log(`[${sessionId}] 🚀 Using script path: ${scriptPath}`);
+                args = [scriptPath];
+            } else {
+                console.warn(`[${sessionId}] ⚠️ Could not find netsuite-mcp executable or script. Falling back to npx.`);
+                executable = 'npx';
+                // 動態構造包名以避免 Turbopack 靜態分析誤判
+                const pkgName = '@suiteinsider/netsuite-mcp';
+                const pkgVersion = 'latest';
+                args = [`${pkgName}@${pkgVersion}`];
+            }
         }
         
         // 2. Ensure MCP sessions directory exists (if we found the package)
@@ -176,6 +179,8 @@ export async function GET(req: NextRequest) {
         // 4. Start process
         console.log(`[${sessionId}] 🚀 Spawning MCP Server: ${executable} ${args.join(' ')}`);
         
+        // Note: This spawn is for executing an external process, not a module import
+        // Turbopack may warn about dynamic paths, but this is intentional runtime behavior
         mcpProcess = spawn(executable, args, {
             env: mcpEnv,
             cwd: process.cwd() 
