@@ -10,14 +10,8 @@ export async function GET() {
     }
 
     try {
-        let sessionsDir;
-        try {
-            const mcpPackagePath = require.resolve('@suiteinsider/netsuite-mcp/package.json');
-            const packageDir = path.dirname(mcpPackagePath);
-            sessionsDir = path.join(packageDir, 'sessions');
-        } catch (e) {
-            sessionsDir = path.join(process.cwd(), 'sessions');
-        }
+        // Use fixed sessions directory to avoid module resolution issues during build
+        const sessionsDir = path.join(process.cwd(), 'sessions');
 
         const filePath = path.join(sessionsDir, `${accountId}.json`);
 

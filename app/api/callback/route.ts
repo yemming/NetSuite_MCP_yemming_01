@@ -62,22 +62,10 @@ export async function GET(request: Request) {
         }
 
         // Success! Now construct the session JSON for MCP
-        // We need to find where to save it.
-        // In Next.js (Serverless), writing to filesystem is ephemeral unless using a volume.
-        // But Zeabur persistent volume mount path is usually /app/data or similar if configured.
-        // For now, we try to write to the node_modules location as before, OR a custom location.
-        // The MCP server looks in its own package directory by default.
-        // We can try to locate it.
-
-        let sessionsDir;
-        try {
-            const mcpPackagePath = require.resolve('@suiteinsider/netsuite-mcp/package.json');
-            const packageDir = path.dirname(mcpPackagePath);
-            sessionsDir = path.join(packageDir, 'sessions');
-        } catch (e) {
-            // Fallback if we can't resolve (shouldn't happen if installed)
-            sessionsDir = path.join(process.cwd(), 'sessions');
-        }
+        // Use a fixed sessions directory to avoid module resolution issues during build
+        // The MCP server will look for sessions in node_modules/@suiteinsider/netsuite-mcp/sessions
+        // But we'll use a consistent location that works in both dev and production
+        const sessionsDir = path.join(process.cwd(), 'sessions');
 
         if (!fs.existsSync(sessionsDir)) {
             fs.mkdirSync(sessionsDir, { recursive: true });

@@ -20,15 +20,13 @@ export async function GET(req: NextRequest) {
     let mcpProcess: any;
 
     try {
-        // Resolve package path
-        // We need to be careful about module resolution in Next.js build
-        // Using require.resolve might fail in some bundler configs, but usually works in Node runtime.
-        const mcpEntry = require.resolve('@suiteinsider/netsuite-mcp');
-
-        // Spawn process
-        mcpProcess = spawn('node', [mcpEntry], {
+        // Use npx to execute the package directly, avoiding module resolution issues during build
+        // This matches the approach in start_netsuite_server.sh
+        mcpProcess = spawn('npx', ['@suiteinsider/netsuite-mcp@latest'], {
             env: {
                 ...process.env,
+                NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID,
+                NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID,
                 OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090"
             }
         });
