@@ -30,31 +30,72 @@ export async function GET(req: NextRequest) {
         // MCP server needs to know where to look for it
         const sessionsDir = path.join(process.cwd(), 'sessions');
         const accountId = process.env.NETSUITE_ACCOUNT_ID;
-        
-        // Before starting MCP server, ensure session file is accessible
-        // The MCP server might look in different locations depending on how it's executed
-        // We'll set the working directory and also try to create a symlink if needed
         const sessionFilePath = path.join(sessionsDir, `${accountId}.json`);
         
-        // Log session file location for debugging
-        console.log(`[${sessionId}] Starting MCP server, session file should be at: ${sessionFilePath}`);
+        // Read session file and ensure it's accessible to MCP server
+        // The MCP server might look for sessions in different locations:
+        // 1. Current working directory (cwd) + sessions/
+        // 2. node_modules/@suiteinsider/netsuite-mcp/sessions/
+        // 3. Environment variable specified location
+        let sessionData: any = null;
         if (fs.existsSync(sessionFilePath)) {
-            console.log(`[${sessionId}] Session file exists: ${sessionFilePath}`);
+            try {
+                const sessionContent = fs.readFileSync(sessionFilePath, 'utf-8');
+                sessionData = JSON.parse(sessionContent);
+                console.log(`[${sessionId}] Session file loaded: ${sessionFilePath}`);
+                
+                // Try to also save to MCP server's expected location
+                // When using npx, the package might be in a cache directory
+                // But we can try to create a symlink or copy to a standard location
+                // For now, we rely on the working directory (cwd) being set correctly
+                
+                // Also try to save to node_modules location if it exists
+                const nodeModulesSessionsPath = path.join(process.cwd(), 'node_modules', '@suiteinsider', 'netsuite-mcp', 'sessions');
+                if (fs.existsSync(path.dirname(nodeModulesSessionsPath))) {
+                    if (!fs.existsSync(nodeModulesSessionsPath)) {
+                        fs.mkdirSync(nodeModulesSessionsPath, { recursive: true });
+                    }
+                    const mcpSessionPath = path.join(nodeModulesSessionsPath, `${accountId}.json`);
+                    fs.writeFileSync(mcpSessionPath, sessionContent);
+                    console.log(`[${sessionId}] Session also copied to: ${mcpSessionPath}`);
+                }
+            } catch (e) {
+                console.error(`[${sessionId}] Failed to read session file:`, e);
+            }
         } else {
             console.warn(`[${sessionId}] WARNING: Session file not found at: ${sessionFilePath}`);
+            console.warn(`[${sessionId}] MCP server will need to authenticate via netsuite_authenticate tool`);
+            console.warn(`[${sessionId}] Please visit: ${process.env.APP_BASE_URL || 'http://localhost:3000'}/api/auth/login`);
         }
         
+        // Prepare environment variables for MCP server
+        const mcpEnv: Record<string, string> = {
+            ...process.env,
+            NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID || '',
+            NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID || '',
+            NETSUITE_CLIENT_SECRET: process.env.NETSUITE_CLIENT_SECRET || '',
+            OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090",
+        };
+        
+        // If we have session data, try to pass tokens via environment variables
+        // Some MCP implementations support this, though @suiteinsider/netsuite-mcp might not
+        // But it doesn't hurt to try
+        if (sessionData?.tokens) {
+            if (sessionData.tokens.access_token) {
+                mcpEnv.NETSUITE_ACCESS_TOKEN = sessionData.tokens.access_token;
+            }
+            if (sessionData.tokens.refresh_token) {
+                mcpEnv.NETSUITE_REFRESH_TOKEN = sessionData.tokens.refresh_token;
+            }
+        }
+        
+        // Set working directory to app root where sessions are stored
+        // This is critical: MCP server should look for sessions in cwd/sessions/
+        console.log(`[${sessionId}] Starting MCP server with cwd: ${process.cwd()}`);
+        console.log(`[${sessionId}] Session file location: ${sessionFilePath}`);
+        
         mcpProcess = spawn('npx', ['@suiteinsider/netsuite-mcp@latest'], {
-            env: {
-                ...process.env,
-                NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID,
-                NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID,
-                NETSUITE_CLIENT_SECRET: process.env.NETSUITE_CLIENT_SECRET,
-                OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090",
-                // Set working directory so MCP server can find session files
-                // The MCP server looks for sessions in its working directory or node_modules location
-                // By setting cwd, we ensure it can find the session file
-            },
+            env: mcpEnv,
             cwd: process.cwd() // Set working directory to app root where sessions are stored
         });
 
