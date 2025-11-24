@@ -6,9 +6,41 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
     const error = searchParams.get('error');
+    const errorDescription = searchParams.get('error_description');
 
     if (error) {
-        return NextResponse.json({ error }, { status: 400 });
+        // Provide helpful error messages for common OAuth errors
+        let errorMessage = error;
+        let suggestions = '';
+
+        if (error === 'scope_mismatch') {
+            errorMessage = 'Scope Mismatch - The requested OAuth scope does not match your NetSuite Integration settings';
+            suggestions = `
+                Solutions:
+                1. Check your NetSuite Integration settings - ensure the scope checkbox matches what you're requesting
+                2. If using "NetSuite AI Connector Service", set NETSUITE_SCOPE environment variable to the correct value
+                3. If using "REST Web Services", ensure NETSUITE_SCOPE=rest_webservices or remove it to use default
+                4. Make sure only ONE scope is checked in NetSuite (NetSuite AI Connector Service cannot be used with others)
+            `;
+        } else if (error === 'access_denied') {
+            errorMessage = 'Access Denied - User declined authorization';
+            suggestions = 'Please try again and approve the authorization request.';
+        } else if (error === 'invalid_client') {
+            errorMessage = 'Invalid Client - Client ID is incorrect';
+            suggestions = 'Check your NETSUITE_CLIENT_ID environment variable.';
+        } else if (error === 'invalid_redirect_uri') {
+            errorMessage = 'Invalid Redirect URI - Redirect URI does not match';
+            suggestions = 'Ensure APP_BASE_URL is set correctly and matches NetSuite Integration settings.';
+        }
+
+        console.error('OAuth Error:', { error, errorDescription, suggestions });
+        
+        return NextResponse.json({ 
+            error: errorMessage,
+            error_code: error,
+            error_description: errorDescription,
+            suggestions: suggestions.trim()
+        }, { status: 400 });
     }
 
     if (!code) {
@@ -46,6 +78,15 @@ export async function GET(request: Request) {
             client_id: clientId
         });
 
+        // Log token exchange request for debugging
+        console.log('Token exchange request:', {
+            tokenUrl,
+            redirectUri,
+            accountId,
+            clientId: clientId.substring(0, 10) + '...',
+            hasClientSecret: !!clientSecret
+        });
+
         const tokenRes = await fetch(tokenUrl, {
             method: 'POST',
             headers: {
@@ -57,8 +98,51 @@ export async function GET(request: Request) {
         const tokens = await tokenRes.json();
 
         if (!tokenRes.ok) {
-            console.error('Token exchange failed:', tokens);
-            return NextResponse.json({ error: 'Token exchange failed', details: tokens }, { status: 500 });
+            console.error('Token exchange failed:', {
+                status: tokenRes.status,
+                statusText: tokenRes.statusText,
+                error: tokens,
+                requestDetails: {
+                    redirectUri,
+                    accountId,
+                    hasCode: !!code
+                }
+            });
+
+            // Provide helpful error messages
+            let errorMessage = 'Token exchange failed';
+            let suggestions = '';
+
+            if (tokens.error === 'invalid_grant') {
+                errorMessage = 'Invalid Grant - The authorization code is invalid, expired, or has already been used';
+                suggestions = `
+                    Common causes:
+                    1. Authorization code was already used (codes can only be used once)
+                    2. Authorization code expired (usually expires within minutes)
+                    3. Redirect URI mismatch between authorization and token exchange
+                    4. Try the OAuth flow again from the beginning
+                    
+                    Solutions:
+                    1. Go back to the home page and click "Connect NetSuite" again
+                    2. Complete the authorization flow in one session (don't wait too long)
+                    3. Ensure APP_BASE_URL is set correctly and matches NetSuite Integration settings
+                    4. Check that redirect_uri in token exchange matches exactly what was used in authorization
+                `;
+            } else if (tokens.error === 'invalid_client') {
+                errorMessage = 'Invalid Client - Client ID or Client Secret is incorrect';
+                suggestions = 'Check your NETSUITE_CLIENT_ID and NETSUITE_CLIENT_SECRET environment variables.';
+            } else if (tokens.error === 'invalid_redirect_uri') {
+                errorMessage = 'Invalid Redirect URI - Redirect URI does not match';
+                suggestions = 'Ensure APP_BASE_URL is set correctly and matches NetSuite Integration settings exactly.';
+            }
+
+            return NextResponse.json({ 
+                error: errorMessage,
+                error_code: tokens.error,
+                error_description: tokens.error_description,
+                details: tokens,
+                suggestions: suggestions.trim()
+            }, { status: 500 });
         }
 
         // Success! Now construct the session JSON for MCP

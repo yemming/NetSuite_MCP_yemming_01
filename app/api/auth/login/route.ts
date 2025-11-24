@@ -16,14 +16,31 @@ export async function GET() {
     const state = crypto.randomBytes(16).toString('hex');
     // Store state in cookie or session if needed for security, skipping for MVP simplicity
 
-    const scope = 'rest_webservices'; // Standard scope
+    // Scope should match what's enabled in NetSuite Integration settings
+    // IMPORTANT: NetSuite AI Connector Service cannot be used with other scopes!
+    // If using NetSuite AI Connector Service, you must uncheck all other scopes (RESTlets, REST Web Services, SuiteAnalytics Connect)
+    // Common scope values:
+    //   - 'rest_webservices' for REST Web Services
+    //   - 'restlets' for RESTlets
+    //   - 'suiteanalytics_connect' for SuiteAnalytics Connect
+    //   - For NetSuite AI Connector Service, try: 'ai_connector' or 'netsuite_ai_connector' (check NetSuite docs)
+    const scope = process.env.NETSUITE_SCOPE || 'rest_webservices'; // Default to rest_webservices, can be overridden via env var
 
     // NetSuite OAuth 2.0 Authorization URL
     // Note: The domain depends on the account type (Production vs Sandbox).
     // For most accounts: https://<accountID>.app.netsuite.com
-    // Account ID in URL must be lowercase.
-    const accountDomain = accountId.toLowerCase().replace('_', '-');
+    // Account ID in URL must be lowercase and underscores replaced with hyphens
+    const accountDomain = accountId.toLowerCase().replace(/_/g, '-');
     const authUrl = `https://${accountDomain}.app.netsuite.com/app/login/oauth2/authorize.nl?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
+
+    // Log for debugging (remove in production or use proper logging)
+    console.log('OAuth Authorization URL:', {
+        accountId,
+        accountDomain,
+        redirectUri,
+        scope,
+        authUrl: authUrl.replace(clientId, 'CLIENT_ID_HIDDEN')
+    });
 
     return NextResponse.redirect(authUrl);
 }
