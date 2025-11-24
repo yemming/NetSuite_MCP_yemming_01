@@ -46,6 +46,10 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Manually copy the MCP server package to ensure it's available
+# Next.js standalone trace might miss it since it's spawned via child_process
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules/@suiteinsider ./node_modules/@suiteinsider
+
 # Copy the sessions directory if it exists (for local dev persistence, though usually empty in build)
 # We need to ensure the runner can write to it
 RUN mkdir -p /app/sessions && chown nextjs:nodejs /app/sessions

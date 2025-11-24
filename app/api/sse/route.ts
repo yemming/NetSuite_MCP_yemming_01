@@ -42,22 +42,21 @@ export async function GET(req: NextRequest) {
             try {
                 const sessionContent = fs.readFileSync(sessionFilePath, 'utf-8');
                 sessionData = JSON.parse(sessionContent);
-                console.log(`[${sessionId}] Session file loaded: ${sessionFilePath}`);
                 
-                // Try to also save to MCP server's expected location
-                // When using npx, the package might be in a cache directory
-                // But we can try to create a symlink or copy to a standard location
-                // For now, we rely on the working directory (cwd) being set correctly
+                // Check token age
+                const tokenTime = sessionData.timestamp || 0;
+                const now = Date.now();
+                const ageInMinutes = Math.round((now - tokenTime) / 60000);
                 
-                // Also try to save to node_modules location if it exists
-                const nodeModulesSessionsPath = path.join(process.cwd(), 'node_modules', '@suiteinsider', 'netsuite-mcp', 'sessions');
-                if (fs.existsSync(path.dirname(nodeModulesSessionsPath))) {
-                    if (!fs.existsSync(nodeModulesSessionsPath)) {
-                        fs.mkdirSync(nodeModulesSessionsPath, { recursive: true });
-                    }
-                    const mcpSessionPath = path.join(nodeModulesSessionsPath, `${accountId}.json`);
-                    fs.writeFileSync(mcpSessionPath, sessionContent);
-                    console.log(`[${sessionId}] Session also copied to: ${mcpSessionPath}`);
+                console.log(`[${sessionId}] 🔍 Session Analysis:`);
+                console.log(`[${sessionId}] - File: ${sessionFilePath}`);
+                console.log(`[${sessionId}] - Account: ${sessionData.config?.accountId}`);
+                console.log(`[${sessionId}] - Token Age: ${ageInMinutes} minutes`);
+                console.log(`[${sessionId}] - Has Access Token: ${!!sessionData.tokens?.access_token}`);
+                console.log(`[${sessionId}] - Has Refresh Token: ${!!sessionData.tokens?.refresh_token}`);
+                
+                if (ageInMinutes > 55) {
+                    console.warn(`[${sessionId}] ⚠️ WARNING: Access Token might be expired (>55 mins). MCP Server relies on Refresh Token.`);
                 }
             } catch (e) {
                 console.error(`[${sessionId}] Failed to read session file:`, e);
@@ -69,7 +68,6 @@ export async function GET(req: NextRequest) {
         }
         
         // Prepare environment variables for MCP server
-        // Use process.env as base and override specific values
         const mcpEnv: NodeJS.ProcessEnv = {
             ...process.env,
             NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID || '',
@@ -78,9 +76,7 @@ export async function GET(req: NextRequest) {
             OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090",
         };
         
-        // If we have session data, try to pass tokens via environment variables
-        // Some MCP implementations support this, though @suiteinsider/netsuite-mcp might not
-        // But it doesn't hurt to try
+        // Inject tokens via environment variables (Backup strategy)
         if (sessionData?.tokens) {
             if (sessionData.tokens.access_token) {
                 mcpEnv.NETSUITE_ACCESS_TOKEN = sessionData.tokens.access_token;
@@ -90,64 +86,59 @@ export async function GET(req: NextRequest) {
             }
         }
         
-        // Set working directory to app root where sessions are stored
-        // This is critical: MCP server should look for sessions in cwd/sessions/
-        console.log(`[${sessionId}] Starting MCP server with cwd: ${process.cwd()}`);
-        console.log(`[${sessionId}] Session file location: ${sessionFilePath}`);
+        // --- CRITICAL FIX: Direct Node Execution with Session Pre-seeding ---
         
-        // Before starting MCP server, try to pre-install the package to find its location
-        // This helps us copy the session file before MCP server checks for it
-        // We'll use a synchronous approach: run npx --version first to trigger package download
+        // 1. Determine MCP package location
+        // In Next.js standalone (Docker), we explicitly copied node_modules/@suiteinsider
+        // to the root node_modules. So we can access it directly.
+        const mcpPackagePath = path.join(process.cwd(), 'node_modules', '@suiteinsider', 'netsuite-mcp');
+        // Use 'dist/index.js' if it exists (compiled), otherwise 'src/index.js'
+        // Based on npm view, main is src/index.js, but installed package usually has dist/ or build/
+        // Let's check for dist first, then src
+        let mcpScriptPath = path.join(mcpPackagePath, 'dist', 'index.js');
+        if (!fs.existsSync(mcpScriptPath)) {
+            mcpScriptPath = path.join(mcpPackagePath, 'src', 'index.js');
+        }
+        // Fallback to index.js in root if neither exists
+        if (!fs.existsSync(mcpScriptPath)) {
+             mcpScriptPath = path.join(mcpPackagePath, 'index.js');
+        }
+
+        const mcpSessionsDir = path.join(mcpPackagePath, 'sessions');
+
+        console.log(`[${sessionId}] 🛠️ Setup:`);
+        console.log(`[${sessionId}] - MCP Package Path: ${mcpPackagePath}`);
+        console.log(`[${sessionId}] - MCP Script Path: ${mcpScriptPath}`);
+        console.log(`[${sessionId}] - Target Sessions Dir: ${mcpSessionsDir}`);
+
+        // 2. Ensure MCP sessions directory exists
+        if (!fs.existsSync(mcpSessionsDir)) {
+             try {
+                fs.mkdirSync(mcpSessionsDir, { recursive: true });
+             } catch (e) {
+                console.error(`[${sessionId}] Failed to create MCP sessions dir:`, e);
+             }
+        }
+
+        // 3. Force copy session file to MCP location BEFORE starting
         if (sessionData && fs.existsSync(sessionFilePath)) {
             try {
-                // First, trigger npx to download the package (this creates the cache directory)
-                // We use --yes to avoid prompts
-                try {
-                    execSync('npx --yes @suiteinsider/netsuite-mcp@latest --version', {
-                        stdio: 'ignore',
-                        timeout: 10000, // 10 second timeout
-                        env: { ...process.env, NPX_UPDATE_NOTIFIER: 'false' }
-                    });
-                } catch (e) {
-                    // Ignore errors, we just want to trigger the download
-                }
-                
-                // Now try to find npx cache directory
-                // npx cache is typically at: ~/.npm/_npx/ or /root/.npm/_npx/
-                const homeDir = process.env.HOME || process.env.USERPROFILE || '/root';
-                const npmCacheBase = path.join(homeDir, '.npm', '_npx');
-                
-                if (fs.existsSync(npmCacheBase)) {
-                    // Find the most recent npx cache directory for @suiteinsider/netsuite-mcp
-                    const cacheDirs = fs.readdirSync(npmCacheBase).filter(dir => {
-                        const pkgPath = path.join(npmCacheBase, dir, 'node_modules', '@suiteinsider', 'netsuite-mcp');
-                        return fs.existsSync(pkgPath);
-                    });
-                    
-                    if (cacheDirs.length > 0) {
-                        // Use the most recent one (or first one found)
-                        const latestCacheDir = cacheDirs[cacheDirs.length - 1];
-                        const mcpSessionsDir = path.join(npmCacheBase, latestCacheDir, 'node_modules', '@suiteinsider', 'netsuite-mcp', 'sessions');
-                        
-                        if (!fs.existsSync(mcpSessionsDir)) {
-                            fs.mkdirSync(mcpSessionsDir, { recursive: true });
-                        }
-                        
-                        const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
-                        const sessionContent = fs.readFileSync(sessionFilePath, 'utf-8');
-                        fs.writeFileSync(mcpSessionPath, sessionContent);
-                        console.log(`[${sessionId}] ✅ Pre-copied session to: ${mcpSessionPath}`);
-                    }
-                }
+                const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
+                fs.writeFileSync(mcpSessionPath, fs.readFileSync(sessionFilePath));
+                console.log(`[${sessionId}] ✅ Enforced session copy to: ${mcpSessionPath}`);
             } catch (e) {
-                console.log(`[${sessionId}] Could not pre-copy session (will try after MCP starts):`, e);
+                console.error(`[${sessionId}] Failed to copy session file:`, e);
             }
         }
+
+        // 4. Start process using node directly (Bypass npx)
+        console.log(`[${sessionId}] 🚀 Spawning MCP Server...`);
         
-        mcpProcess = spawn('npx', ['@suiteinsider/netsuite-mcp@latest'], {
+        mcpProcess = spawn('node', [mcpScriptPath], {
             env: mcpEnv,
-            cwd: process.cwd() // Set working directory to app root where sessions are stored
+            cwd: process.cwd() 
         });
+
 
         // Store session
         sessions.set(sessionId, { process: mcpProcess, writer });
@@ -178,7 +169,27 @@ export async function GET(req: NextRequest) {
 
             mcpProcess.stderr.on('data', async (data: Buffer) => {
                 const output = data.toString();
-                console.error(`[${sessionId}] MCP Error: ${output}`);
+                console.error(`[${sessionId}] MCP Log: ${output.trim()}`);
+                
+                // Detect Authentication Required state
+                if (output.includes('authentication required') || output.includes('Not authenticated')) {
+                     const loginUrl = `${process.env.APP_BASE_URL || 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN || 'YOUR_APP_URL'}/api/auth/login`;
+                     const authWarning = `
+                     
+********************************************************************************
+🚨 AUTHENTICATION REQUIRED 🚨
+The MCP Server needs a fresh session.
+Please visit this URL in your browser to authenticate:
+
+👉 ${loginUrl}
+
+After authenticating, the session file will be updated and you can retry the connection.
+********************************************************************************
+`;
+                     console.error(authWarning);
+                     // We can also try to send this as a 'message' event to n8n so it shows up in the frontend logs?
+                     // Probably better to just keep it in server logs for now.
+                }
                 
                 // Parse MCP server output to find sessions directory
                 // Look for pattern: "📁 Sessions Directory: /path/to/sessions"
