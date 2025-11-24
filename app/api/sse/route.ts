@@ -95,6 +95,42 @@ export async function GET(req: NextRequest) {
         console.log(`[${sessionId}] Starting MCP server with cwd: ${process.cwd()}`);
         console.log(`[${sessionId}] Session file location: ${sessionFilePath}`);
         
+        // Before starting MCP server, try to pre-install the package to find its location
+        // This helps us copy the session file before MCP server checks for it
+        if (sessionData && fs.existsSync(sessionFilePath)) {
+            try {
+                // Try to find npx cache directory
+                // npx cache is typically at: ~/.npm/_npx/ or /root/.npm/_npx/
+                const homeDir = process.env.HOME || process.env.USERPROFILE || '/root';
+                const npmCacheBase = path.join(homeDir, '.npm', '_npx');
+                
+                if (fs.existsSync(npmCacheBase)) {
+                    // Find the most recent npx cache directory for @suiteinsider/netsuite-mcp
+                    const cacheDirs = fs.readdirSync(npmCacheBase).filter(dir => {
+                        const pkgPath = path.join(npmCacheBase, dir, 'node_modules', '@suiteinsider', 'netsuite-mcp');
+                        return fs.existsSync(pkgPath);
+                    });
+                    
+                    if (cacheDirs.length > 0) {
+                        // Use the most recent one (or first one found)
+                        const latestCacheDir = cacheDirs[cacheDirs.length - 1];
+                        const mcpSessionsDir = path.join(npmCacheBase, latestCacheDir, 'node_modules', '@suiteinsider', 'netsuite-mcp', 'sessions');
+                        
+                        if (!fs.existsSync(mcpSessionsDir)) {
+                            fs.mkdirSync(mcpSessionsDir, { recursive: true });
+                        }
+                        
+                        const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
+                        const sessionContent = fs.readFileSync(sessionFilePath, 'utf-8');
+                        fs.writeFileSync(mcpSessionPath, sessionContent);
+                        console.log(`[${sessionId}] ✅ Pre-copied session to: ${mcpSessionPath}`);
+                    }
+                }
+            } catch (e) {
+                console.log(`[${sessionId}] Could not pre-copy session (will try after MCP starts):`, e);
+            }
+        }
+        
         mcpProcess = spawn('npx', ['@suiteinsider/netsuite-mcp@latest'], {
             env: mcpEnv,
             cwd: process.cwd() // Set working directory to app root where sessions are stored
@@ -109,8 +145,10 @@ export async function GET(req: NextRequest) {
         // We append sessionId as query param
         const endpointUrl = `/api/sse?sessionId=${sessionId}`;
 
-        // Track if we've copied the session file to MCP's sessions directory
+        // Track if we've copied the session file and sent auth request
         let sessionCopied = false;
+        let authRequestSent = false;
+        let mcpSessionsDir: string | null = null;
 
         // Start streaming
         (async () => {
@@ -135,7 +173,7 @@ export async function GET(req: NextRequest) {
                 if (!sessionCopied && sessionData && fs.existsSync(sessionFilePath)) {
                     const sessionsDirMatch = output.match(/📁 Sessions Directory: (.+)/);
                     if (sessionsDirMatch && sessionsDirMatch[1]) {
-                        const mcpSessionsDir = sessionsDirMatch[1].trim();
+                        mcpSessionsDir = sessionsDirMatch[1].trim();
                         try {
                             // Ensure the directory exists
                             if (!fs.existsSync(mcpSessionsDir)) {
@@ -148,10 +186,73 @@ export async function GET(req: NextRequest) {
                             fs.writeFileSync(mcpSessionPath, sessionContent);
                             console.log(`[${sessionId}] ✅ Session file copied to MCP location: ${mcpSessionPath}`);
                             sessionCopied = true;
+                            
+                            // After copying, wait a bit and then send auth request via MCP protocol
+                            // This ensures MCP server can reload the session
+                            if (!authRequestSent && sessionData?.tokens) {
+                                setTimeout(() => {
+                                    try {
+                                        // Send a JSON-RPC request to call netsuite_authenticate
+                                        // This will trigger MCP server to reload the session file
+                                        const authRequest = {
+                                            jsonrpc: "2.0",
+                                            id: 1,
+                                            method: "tools/call",
+                                            params: {
+                                                name: "netsuite_authenticate",
+                                                arguments: {
+                                                    accountId: accountId,
+                                                    clientId: process.env.NETSUITE_CLIENT_ID
+                                                }
+                                            }
+                                        };
+                                        
+                                        if (mcpProcess.stdin && !mcpProcess.stdin.destroyed) {
+                                            mcpProcess.stdin.write(JSON.stringify(authRequest) + '\n');
+                                            console.log(`[${sessionId}] ✅ Sent auth request via MCP protocol`);
+                                            authRequestSent = true;
+                                        }
+                                    } catch (e) {
+                                        console.error(`[${sessionId}] Failed to send auth request:`, e);
+                                    }
+                                }, 1000); // Wait 1 second for MCP server to be ready
+                            }
                         } catch (e) {
                             console.error(`[${sessionId}] Failed to copy session to MCP location:`, e);
                         }
                     }
+                }
+                
+                // Also check if MCP server is ready, then send auth request
+                if (!authRequestSent && sessionData && output.includes('NetSuite MCP Server ready!')) {
+                    // MCP server is ready, try to authenticate
+                    setTimeout(() => {
+                        if (mcpSessionsDir && fs.existsSync(path.join(mcpSessionsDir, `${accountId}.json`))) {
+                            // Session file is in place, try to trigger reload via MCP
+                            try {
+                                const authRequest = {
+                                    jsonrpc: "2.0",
+                                    id: 1,
+                                    method: "tools/call",
+                                    params: {
+                                        name: "netsuite_authenticate",
+                                        arguments: {
+                                            accountId: accountId,
+                                            clientId: process.env.NETSUITE_CLIENT_ID
+                                        }
+                                    }
+                                };
+                                
+                                if (mcpProcess.stdin && !mcpProcess.stdin.destroyed) {
+                                    mcpProcess.stdin.write(JSON.stringify(authRequest) + '\n');
+                                    console.log(`[${sessionId}] ✅ Sent auth request after server ready`);
+                                    authRequestSent = true;
+                                }
+                            } catch (e) {
+                                console.error(`[${sessionId}] Failed to send auth request:`, e);
+                            }
+                        }
+                    }, 500);
                 }
             });
 
