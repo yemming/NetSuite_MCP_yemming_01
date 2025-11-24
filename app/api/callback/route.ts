@@ -117,6 +117,18 @@ export async function GET(request: Request) {
 
         const tokens = await tokenRes.json();
 
+        // Log token response for debugging (including scope)
+        console.log('Token exchange response:', {
+            success: tokenRes.ok,
+            status: tokenRes.status,
+            hasAccessToken: !!tokens.access_token,
+            hasRefreshToken: !!tokens.refresh_token,
+            tokenType: tokens.token_type,
+            expiresIn: tokens.expires_in,
+            scope: tokens.scope || 'not provided in response',
+            error: tokens.error || null
+        });
+
         if (!tokenRes.ok) {
             console.error('Token exchange failed:', {
                 status: tokenRes.status,
@@ -190,7 +202,8 @@ export async function GET(request: Request) {
             config: {
                 accountId: normalizedAccountId, // Use lowercase for consistency
                 clientId,
-                redirectUri
+                redirectUri,
+                scope: tokens.scope || process.env.NETSUITE_SCOPE || 'mcp' // Store scope for reference
             },
             timestamp: Date.now(),
             tokens: {
@@ -201,6 +214,13 @@ export async function GET(request: Request) {
             },
             authenticated: true
         };
+
+        // Log scope information for debugging
+        console.log('Session created with scope:', {
+            tokenScope: tokens.scope || 'not provided',
+            requestedScope: process.env.NETSUITE_SCOPE || 'mcp',
+            accountId: normalizedAccountId
+        });
 
         // Save with lowercase filename only (consistent with MCP server)
         const filePath = path.join(sessionsDir, `${normalizedAccountId}.json`);

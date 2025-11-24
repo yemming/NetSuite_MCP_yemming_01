@@ -17,14 +17,17 @@ export async function GET() {
     // Store state in cookie or session if needed for security, skipping for MVP simplicity
 
     // Scope should match what's enabled in NetSuite Integration settings
-    // IMPORTANT: NetSuite AI Connector Service cannot be used with other scopes!
-    // If using NetSuite AI Connector Service, you must uncheck all other scopes (RESTlets, REST Web Services, SuiteAnalytics Connect)
+    // IMPORTANT: NetSuite MCP Server uses 'mcp' scope
+    // The MCP Server (patched_manager.js) requests 'mcp' scope, so we must use the same here
     // Common scope values:
-    //   - 'rest_webservices' for REST Web Services
+    //   - 'mcp' for NetSuite MCP Server (required for MCP tools)
+    //   - 'rest_webservices' for REST Web Services (legacy, not compatible with MCP)
     //   - 'restlets' for RESTlets
     //   - 'suiteanalytics_connect' for SuiteAnalytics Connect
-    //   - For NetSuite AI Connector Service, try: 'ai_connector' or 'netsuite_ai_connector' (check NetSuite docs)
-    const scope = process.env.NETSUITE_SCOPE || 'rest_webservices'; // Default to rest_webservices, can be overridden via env var
+    // NOTE: If your NetSuite Integration doesn't have 'mcp' scope, you may need to:
+    //   1. Check NetSuite Integration settings for available scopes
+    //   2. Use the scope that matches your Integration configuration
+    const scope = process.env.NETSUITE_SCOPE || 'mcp'; // Default to 'mcp' for MCP Server compatibility
 
     // NetSuite OAuth 2.0 Authorization URL
     // Note: The domain depends on the account type (Production vs Sandbox).
