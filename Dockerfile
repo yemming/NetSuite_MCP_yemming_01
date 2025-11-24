@@ -52,9 +52,11 @@ RUN mkdir -p /app/sessions && chown nextjs:nodejs /app/sessions
 
 USER nextjs
 
+# Zeabur will provide PORT via WEB_PORT environment variable
+# Use PORT if set, otherwise default to 3000
 EXPOSE 3000
 
-ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
+# PORT will be set by Zeabur via WEB_PORT, don't hardcode it
 
 CMD ["node", "server.js"]
