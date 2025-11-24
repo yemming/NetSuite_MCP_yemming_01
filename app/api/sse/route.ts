@@ -70,7 +70,10 @@ export async function GET(req: NextRequest) {
         // Prepare environment variables for MCP server
         const mcpEnv: NodeJS.ProcessEnv = {
             ...process.env,
-            NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID || '',
+            // Ensure Account ID is passed as lowercase to environment variable
+            // NetSuite API endpoints are typically lowercase (e.g. td3018275.suitetalk.api.netsuite.com)
+            // MCP server might be using this to construct URLs or keys
+            NETSUITE_ACCOUNT_ID: (process.env.NETSUITE_ACCOUNT_ID || '').toLowerCase(),
             NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID || '',
             NETSUITE_CLIENT_SECRET: process.env.NETSUITE_CLIENT_SECRET || '',
             OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090",
@@ -92,7 +95,7 @@ export async function GET(req: NextRequest) {
         console.log(`[${sessionId}] 🛡️ Auth Injection:`);
         console.log(`[${sessionId}] - Access Token Injected: ${!!mcpEnv.NETSUITE_ACCESS_TOKEN}`);
         console.log(`[${sessionId}] - Refresh Token Injected: ${!!mcpEnv.NETSUITE_REFRESH_TOKEN}`);
-        console.log(`[${sessionId}] - Account ID: ${mcpEnv.NETSUITE_ACCOUNT_ID}`);
+        console.log(`[${sessionId}] - Account ID (Env): ${mcpEnv.NETSUITE_ACCOUNT_ID}`);
 
         // --- CRITICAL FIX: Use standard node_modules executable path ---
         
