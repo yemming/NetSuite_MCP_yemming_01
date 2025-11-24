@@ -158,8 +158,9 @@ export async function GET(req: NextRequest) {
         // We append sessionId as query param
         const endpointUrl = `/api/sse?sessionId=${sessionId}`;
 
-        // Track if we've copied the session file
+        // Track if we've copied the session file and initialized auth
         let sessionCopied = false;
+        let authInitialized = false;
 
         // Start streaming
         (async () => {
@@ -198,17 +199,47 @@ export async function GET(req: NextRequest) {
                             fs.writeFileSync(mcpSessionPath, sessionContent);
                             console.log(`[${sessionId}] ✅ Session file copied to MCP location: ${mcpSessionPath}`);
                             sessionCopied = true;
-                            
-                            // Note: We do NOT call netsuite_authenticate automatically because:
-                            // 1. It would trigger a new OAuth flow
-                            // 2. It requires port 8080 which may be in use
-                            // 3. MCP server should automatically load the session file if it exists
-                            // If MCP server still shows "Not authenticated", the user can manually
-                            // call netsuite_authenticate in n8n, but it should use the existing session
                         } catch (e) {
                             console.error(`[${sessionId}] Failed to copy session to MCP location:`, e);
                         }
                     }
+                }
+                
+                // When MCP server is ready, if we have session data, try to initialize auth
+                // by directly writing tokens to the session file again (force reload)
+                if (!authInitialized && sessionCopied && sessionData && output.includes('NetSuite MCP Server ready!')) {
+                    setTimeout(() => {
+                        try {
+                            // Re-write the session file to trigger MCP server to reload it
+                            // This is a workaround for MCP server not detecting the session file on startup
+                            const sessionsDirMatch = output.match(/📁 Sessions Directory: (.+)/);
+                            if (sessionsDirMatch && sessionsDirMatch[1]) {
+                                const mcpSessionsDir = sessionsDirMatch[1].trim();
+                                const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
+                                
+                                // Ensure the session file exists and has correct format
+                                if (fs.existsSync(mcpSessionPath)) {
+                                    // Re-write to ensure it's fresh
+                                    const sessionContent = fs.readFileSync(sessionFilePath, 'utf-8');
+                                    fs.writeFileSync(mcpSessionPath, sessionContent);
+                                    console.log(`[${sessionId}] ✅ Re-wrote session file to trigger reload: ${mcpSessionPath}`);
+                                    
+                                    // Log session file contents for debugging
+                                    const sessionFileContent = fs.readFileSync(mcpSessionPath, 'utf-8');
+                                    const parsed = JSON.parse(sessionFileContent);
+                                    console.log(`[${sessionId}] Session file contains:`, {
+                                        hasTokens: !!parsed.tokens,
+                                        hasAccessToken: !!parsed.tokens?.access_token,
+                                        hasRefreshToken: !!parsed.tokens?.refresh_token,
+                                        authenticated: parsed.authenticated
+                                    });
+                                }
+                            }
+                            authInitialized = true;
+                        } catch (e) {
+                            console.error(`[${sessionId}] Failed to initialize auth:`, e);
+                        }
+                    }, 500);
                 }
             });
 
