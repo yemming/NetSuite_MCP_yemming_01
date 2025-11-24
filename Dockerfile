@@ -24,6 +24,14 @@ ENV NEXT_TELEMETRY_DISABLED 1
 
 RUN npm run build
 
+# Production dependencies stage
+# We need a clean node_modules with only production dependencies
+# because Next.js standalone output might prune dependencies that are dynamically required
+FROM base AS prod_deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
+
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
@@ -46,9 +54,11 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Manually copy the MCP server package to ensure it's available
-# Next.js standalone trace might miss it since it's spawned via child_process
-COPY --from=deps --chown=nextjs:nodejs /app/node_modules/@suiteinsider ./node_modules/@suiteinsider
+# CRITICAL FIX: Copy FULL production node_modules
+# Next.js standalone build prunes dependencies it thinks are unused.
+# But since we spawn a child process that uses them, we must ensure they are present.
+# We overwrite the standalone node_modules with the full production set.
+COPY --from=prod_deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 # Copy the sessions directory if it exists (for local dev persistence, though usually empty in build)
 # We need to ensure the runner can write to it
