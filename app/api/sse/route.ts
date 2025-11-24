@@ -69,7 +69,8 @@ export async function GET(req: NextRequest) {
         }
         
         // Prepare environment variables for MCP server
-        const mcpEnv: Record<string, string> = {
+        // Use process.env as base and override specific values
+        const mcpEnv: NodeJS.ProcessEnv = {
             ...process.env,
             NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID || '',
             NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID || '',
