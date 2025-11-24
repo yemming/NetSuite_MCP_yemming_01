@@ -109,6 +109,9 @@ export async function GET(req: NextRequest) {
         // We append sessionId as query param
         const endpointUrl = `/api/sse?sessionId=${sessionId}`;
 
+        // Track if we've copied the session file to MCP's sessions directory
+        let sessionCopied = false;
+
         // Start streaming
         (async () => {
             // Send the endpoint event first
@@ -123,8 +126,33 @@ export async function GET(req: NextRequest) {
                 }
             });
 
-            mcpProcess.stderr.on('data', (data: Buffer) => {
-                console.error(`[${sessionId}] MCP Error: ${data}`);
+            mcpProcess.stderr.on('data', async (data: Buffer) => {
+                const output = data.toString();
+                console.error(`[${sessionId}] MCP Error: ${output}`);
+                
+                // Parse MCP server output to find sessions directory
+                // Look for pattern: "📁 Sessions Directory: /path/to/sessions"
+                if (!sessionCopied && sessionData && fs.existsSync(sessionFilePath)) {
+                    const sessionsDirMatch = output.match(/📁 Sessions Directory: (.+)/);
+                    if (sessionsDirMatch && sessionsDirMatch[1]) {
+                        const mcpSessionsDir = sessionsDirMatch[1].trim();
+                        try {
+                            // Ensure the directory exists
+                            if (!fs.existsSync(mcpSessionsDir)) {
+                                fs.mkdirSync(mcpSessionsDir, { recursive: true });
+                            }
+                            
+                            // Copy session file to MCP's sessions directory
+                            const mcpSessionPath = path.join(mcpSessionsDir, `${accountId}.json`);
+                            const sessionContent = fs.readFileSync(sessionFilePath, 'utf-8');
+                            fs.writeFileSync(mcpSessionPath, sessionContent);
+                            console.log(`[${sessionId}] ✅ Session file copied to MCP location: ${mcpSessionPath}`);
+                            sessionCopied = true;
+                        } catch (e) {
+                            console.error(`[${sessionId}] Failed to copy session to MCP location:`, e);
+                        }
+                    }
+                }
             });
 
             mcpProcess.on('close', () => {
