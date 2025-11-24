@@ -4,13 +4,29 @@
     "description": "SSE Bridge for NetSuite MCP Server",
     "main": "server.js",
     "scripts": {
-        "start": "node server.js"
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint"
     },
     "dependencies": {
-        "express": "^4.18.2",
+        "@suiteinsider/netsuite-mcp": "latest",
+        "@types/node": "^24.10.1",
+        "@types/react": "^19.2.6",
+        "@types/react-dom": "^19.2.3",
         "body-parser": "^1.20.2",
         "cross-spawn": "^7.0.3",
-        "uuid": "^9.0.1",
-        "@suiteinsider/netsuite-mcp": "latest"
+        "eslint": "^9.39.1",
+        "eslint-config-next": "^16.0.3",
+        "express": "^4.18.2",
+        "lucide-react": "^0.554.0",
+        "next": "^16.0.3",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "typescript": "^5.9.3",
+        "uuid": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/uuid": "^10.0.0"
     }
 }
