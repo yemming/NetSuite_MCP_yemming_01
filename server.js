@@ -96,6 +96,50 @@ app.post('/message', (req, res) => {
     res.status(200).send('Accepted');
 });
 
+const fs = require('fs');
+
+// ... (imports)
+
+// Restore session from Env Var
+function restoreSession() {
+    if (!process.env.NETSUITE_SESSION_JSON) {
+        console.log('No NETSUITE_SESSION_JSON provided, skipping session restore.');
+        return;
+    }
+
+    try {
+        // Find the package path to locate sessions directory
+        // We use require.resolve to find the package.json of the dependency
+        const packagePath = require.resolve('@suiteinsider/netsuite-mcp/package.json');
+        const packageDir = path.dirname(packagePath);
+        const sessionsDir = path.join(packageDir, 'sessions');
+
+        const sessionData = JSON.parse(process.env.NETSUITE_SESSION_JSON);
+        // The filename is usually ACCOUNT_ID.json
+        // The JSON structure provided by user has config.accountId
+        const accountId = sessionData.config?.accountId || sessionData.accountId;
+
+        if (!accountId) {
+            console.error('Could not find accountId in NETSUITE_SESSION_JSON');
+            return;
+        }
+
+        if (!fs.existsSync(sessionsDir)) {
+            fs.mkdirSync(sessionsDir, { recursive: true });
+        }
+
+        const filePath = path.join(sessionsDir, `${accountId}.json`);
+        fs.writeFileSync(filePath, process.env.NETSUITE_SESSION_JSON);
+        console.log(`Successfully restored session for ${accountId} to ${filePath}`);
+
+    } catch (e) {
+        console.error('Error restoring session:', e);
+    }
+}
+
+// Call restore before starting
+restoreSession();
+
 app.listen(PORT, () => {
     console.log(`NetSuite MCP Bridge listening on port ${PORT}`);
 });
