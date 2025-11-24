@@ -32,6 +32,14 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
+# Apply patches to @suiteinsider/netsuite-mcp to allow environment variable auth injection
+# 1. Force hasValidSession to true
+# 2. Inject NETSUITE_ACCESS_TOKEN in ensureValidToken
+# 3. Inject NETSUITE_ACCOUNT_ID in getAccountId
+RUN sed -i 's/return await this.storage.isAuthenticated();/return true;/g' node_modules/@suiteinsider/netsuite-mcp/src/oauth/manager.js && \
+    sed -i 's/const session = await this.storage.load();/if (process.env.NETSUITE_ACCESS_TOKEN) return process.env.NETSUITE_ACCESS_TOKEN; const session = await this.storage.load();/g' node_modules/@suiteinsider/netsuite-mcp/src/oauth/manager.js && \
+    sed -i 's/return session?.tokens?.accountId;/return process.env.NETSUITE_ACCOUNT_ID || session?.tokens?.accountId;/g' node_modules/@suiteinsider/netsuite-mcp/src/oauth/manager.js
+
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
