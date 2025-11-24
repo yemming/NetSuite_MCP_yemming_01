@@ -13,10 +13,18 @@ app.use(bodyParser.json());
 const sessions = new Map();
 
 // Configuration for NetSuite MCP
-// In production (Zeabur), these should be set as environment variables
+// Resolve the package path to ensure we run the same instance where we write the session
+const mcpPackagePath = require.resolve('@suiteinsider/netsuite-mcp/package.json');
+const mcpPackageDir = path.dirname(mcpPackagePath);
+// Assuming the bin is at dist/index.js or similar based on standard structure, 
+// but safer to use the package.json 'bin' or 'main'. 
+// Since we can't easily read package.json here, let's try to require the main module.
+// Actually, require.resolve('@suiteinsider/netsuite-mcp') gives the main entry point.
+const mcpEntry = require.resolve('@suiteinsider/netsuite-mcp');
+
 const NETSUITE_CONFIG = {
-    command: 'npx',
-    args: ['@suiteinsider/netsuite-mcp@latest'],
+    command: 'node',
+    args: [mcpEntry],
     env: {
         ...process.env,
         // Fallback defaults if env vars are missing (mainly for local dev)
