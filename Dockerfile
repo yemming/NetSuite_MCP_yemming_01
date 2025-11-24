@@ -14,6 +14,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Ensure public directory exists (Next.js may not create it if empty)
+RUN mkdir -p ./public
+
 # Next.js collects completely anonymous telemetry data about general usage.
 # Learn more here: https://nextjs.org/telemetry
 # Uncomment the following line in case you want to disable telemetry during the build.
@@ -31,7 +34,8 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
+# Copy public directory (will be empty if not present in source, but directory exists after builder stage)
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 # Set the correct permission for prerender cache
 RUN mkdir .next
