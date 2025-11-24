@@ -22,7 +22,7 @@ const NETSUITE_CONFIG = {
         // Fallback defaults if env vars are missing (mainly for local dev)
         // NETSUITE_ACCOUNT_ID: process.env.NETSUITE_ACCOUNT_ID,
         // NETSUITE_CLIENT_ID: process.env.NETSUITE_CLIENT_ID,
-        // OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "8080"
+        OAUTH_CALLBACK_PORT: process.env.OAUTH_CALLBACK_PORT || "9090"
     }
 };
 
