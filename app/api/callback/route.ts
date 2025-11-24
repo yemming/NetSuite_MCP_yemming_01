@@ -79,12 +79,16 @@ export async function GET(request: Request) {
         });
 
         // Log token exchange request for debugging
+        // IMPORTANT: redirect_uri must EXACTLY match what was used in authorization
         console.log('Token exchange request:', {
             tokenUrl,
             redirectUri,
+            redirectUriEncoded: encodeURIComponent(redirectUri),
             accountId,
             clientId: clientId.substring(0, 10) + '...',
-            hasClientSecret: !!clientSecret
+            hasClientSecret: !!clientSecret,
+            codeLength: code?.length || 0,
+            codePrefix: code?.substring(0, 10) || 'none'
         });
 
         const tokenRes = await fetch(tokenUrl, {
@@ -141,6 +145,12 @@ export async function GET(request: Request) {
                 error_code: tokens.error,
                 error_description: tokens.error_description,
                 details: tokens,
+                debug_info: {
+                    redirect_uri_used: redirectUri,
+                    account_id: accountId,
+                    has_code: !!code,
+                    app_base_url: baseUrl
+                },
                 suggestions: suggestions.trim()
             }, { status: 500 });
         }
