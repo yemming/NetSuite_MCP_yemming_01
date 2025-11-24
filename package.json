@@ -10,6 +10,7 @@
         "lint": "next lint"
     },
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.22.0",
         "@suiteinsider/netsuite-mcp": "latest",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
